@@ -1,9 +1,11 @@
-# 🔍 PAD File Validator
+# 🔍 PAD File Editor and Validator
 
 A modern, user-friendly web application for validating Portable Application Description (PAD) XML files. This tool helps software developers ensure their PAD files conform to the official PAD specification before submission to software directories.
 
 ![PHP Version](https://img.shields.io/badge/PHP-7.4%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+
+**Repository**: [https://github.com/i-net-software/pad-file-editor-validator](https://github.com/i-net-software/pad-file-editor-validator)
 
 ## ✨ Features
 
@@ -32,8 +34,8 @@ A modern, user-friendly web application for validating Portable Application Desc
 
 1. **Clone or download this repository**:
    ```bash
-   git clone https://github.com/yourusername/pad-file-validator.git
-   cd pad-file-validator
+   git clone https://github.com/i-net-software/pad-file-editor-validator.git
+   cd pad-file-editor-validator
    ```
 
 2. **That's it!** No dependencies to install - it's pure PHP with no external package managers needed.
@@ -42,7 +44,7 @@ A modern, user-friendly web application for validating Portable Application Desc
 
 1. **Navigate to the project directory**:
    ```bash
-   cd pad-file-validator
+   cd pad-file-editor-validator
    ```
 
 2. **Start the PHP built-in web server**:
@@ -124,7 +126,7 @@ extension=curl
 ## 🏗️ Project Structure
 
 ```
-pad-file-validator/
+pad-file-editor-validator/
 ├── index.php              # Main entry point (HTML + PHP)
 ├── include/
 │   ├── padfile.php       # PAD file loading and parsing
@@ -132,6 +134,7 @@ pad-file-validator/
 │   ├── padspec.php       # PAD specification handling
 │   └── xmlfile.php       # XML parsing and encoding detection
 ├── README.md             # This file
+├── LICENSE               # MIT License
 └── .gitignore           # Git ignore rules
 ```
 
@@ -211,7 +214,7 @@ This project is open source and available under the [MIT License](LICENSE).
 If you encounter any issues or have questions:
 
 1. Check the [Troubleshooting](#-troubleshooting) section
-2. Review existing [GitHub Issues](https://github.com/yourusername/pad-file-validator/issues)
+2. Review existing [GitHub Issues](https://github.com/i-net-software/pad-file-editor-validator/issues)
 3. Create a new issue with details about your problem
 
 ---
