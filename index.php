@@ -15,9 +15,15 @@ if ( $URL == "" ) $URL = "https://";
 
 // If AJAX request, return JSON
 if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
-    // Clear any output buffers and suppress errors for clean JSON output
-    while (ob_get_level()) {
-        ob_end_clean();
+    // Start output buffering early to catch any accidental output
+    if (ob_get_level() == 0) {
+        ob_start();
+    } else {
+        // Clear any existing buffers
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        ob_start();
     }
     
     // Suppress warnings/notices that might corrupt JSON (but keep errors)
@@ -25,7 +31,10 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
     $oldDisplayErrors = ini_get('display_errors');
     ini_set('display_errors', '0');
     
-    // Set proper headers
+    // Clear any output that might have been generated before this point
+    ob_clean();
+    
+    // Set proper headers (must be before any output)
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-cache, must-revalidate');
     
@@ -67,11 +76,14 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
             $result['loading']['message'] = 'No URL specified. (JSON encoding error)';
             $json = json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
         }
-        while (ob_get_level() > 0) ob_end_clean();
+        // Clean buffer and output JSON
+        ob_clean();
         if (isset($oldErrorReporting)) error_reporting($oldErrorReporting);
         if (isset($oldDisplayErrors)) ini_set('display_errors', $oldDisplayErrors);
         echo $json;
-        exit;
+        if (ob_get_level() > 0) ob_end_flush();
+        flush();
+        exit(0);
       case ERR_READ_FROM_URL_FAILED:
         $result['loading']['status'] = 'error';
         $result['loading']['message'] = 'Cannot open URL.' . ($PAD->LastErrorMsg != "" ? " (" . $PAD->LastErrorMsg . ")" : "");
@@ -80,11 +92,14 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
             $result['loading']['message'] = 'Cannot open URL.';
             $json = json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
         }
-        while (ob_get_level() > 0) ob_end_clean();
+        // Clean buffer and output JSON
+        ob_clean();
         if (isset($oldErrorReporting)) error_reporting($oldErrorReporting);
         if (isset($oldDisplayErrors)) ini_set('display_errors', $oldDisplayErrors);
         echo $json;
-        exit;
+        if (ob_get_level() > 0) ob_end_flush();
+        flush();
+        exit(0);
       case ERR_PARSE_ERROR:
         $result['loading']['status'] = 'error';
         $result['loading']['message'] = 'Parse Error: ' . $PAD->ParseError;
@@ -93,11 +108,14 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
             $result['loading']['message'] = 'Parse Error occurred.';
             $json = json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
         }
-        while (ob_get_level() > 0) ob_end_clean();
+        // Clean buffer and output JSON
+        ob_clean();
         if (isset($oldErrorReporting)) error_reporting($oldErrorReporting);
         if (isset($oldDisplayErrors)) ini_set('display_errors', $oldDisplayErrors);
         echo $json;
-        exit;
+        if (ob_get_level() > 0) ob_end_flush();
+        flush();
+        exit(0);
     }
     
     // Create validator
@@ -118,11 +136,14 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
             $result['loading']['message'] = 'Error loading Validator.';
             $json = json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
         }
-        while (ob_get_level() > 0) ob_end_clean();
+        // Clean buffer and output JSON
+        ob_clean();
         if (isset($oldErrorReporting)) error_reporting($oldErrorReporting);
         if (isset($oldDisplayErrors)) ini_set('display_errors', $oldDisplayErrors);
         echo $json;
-        exit;
+        if (ob_get_level() > 0) ob_end_flush();
+        flush();
+        exit(0);
     }
     
     // Validate
@@ -152,25 +173,55 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
     // Ensure XML content doesn't break JSON (remove any invalid UTF-8 sequences)
     $result['xmlContent'] = mb_convert_encoding($xmlContent, 'UTF-8', 'UTF-8');
     
-    // Collect warnings
+    // Collect warnings - use a separate buffer to capture Dump() output
     foreach($PADValidator->ValidationWarnings as $warn) {
+        // Create a temporary buffer for this dump
+        $tempBuffer = ob_get_level();
         ob_start();
-        $warn->Dump();
-        $warningHtml = ob_get_clean();
-        // Clean up any output buffer issues
-        if (!empty($warningHtml)) {
-            $result['warnings'][] = $warningHtml;
+        try {
+            $warn->Dump();
+            $warningHtml = ob_get_clean();
+            // Restore buffer level
+            while (ob_get_level() > $tempBuffer) {
+                ob_end_clean();
+            }
+            // Clean up any output buffer issues
+            if (!empty($warningHtml) && trim($warningHtml) !== '') {
+                $result['warnings'][] = trim($warningHtml);
+            }
+        } catch (Exception $e) {
+            // Clean up on error
+            ob_end_clean();
+            while (ob_get_level() > $tempBuffer) {
+                ob_end_clean();
+            }
+            $result['warnings'][] = 'Warning: ' . htmlspecialchars($e->getMessage());
         }
     }
     
-    // Collect errors
+    // Collect errors - use a separate buffer to capture Dump() output
     foreach($PADValidator->ValidationErrors as $err) {
+        // Create a temporary buffer for this dump
+        $tempBuffer = ob_get_level();
         ob_start();
-        $err->Dump();
-        $errorHtml = ob_get_clean();
-        // Clean up any output buffer issues
-        if (!empty($errorHtml)) {
-            $result['errors'][] = $errorHtml;
+        try {
+            $err->Dump();
+            $errorHtml = ob_get_clean();
+            // Restore buffer level
+            while (ob_get_level() > $tempBuffer) {
+                ob_end_clean();
+            }
+            // Clean up any output buffer issues
+            if (!empty($errorHtml) && trim($errorHtml) !== '') {
+                $result['errors'][] = trim($errorHtml);
+            }
+        } catch (Exception $e) {
+            // Clean up on error
+            ob_end_clean();
+            while (ob_get_level() > $tempBuffer) {
+                ob_end_clean();
+            }
+            $result['errors'][] = 'Error: ' . htmlspecialchars($e->getMessage());
         }
     }
     
@@ -211,19 +262,30 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
         }
     }
     
-    // Ensure no output before JSON - clear any remaining buffers
-    while (ob_get_level() > 0) {
+    // Ensure no output before JSON - clear any remaining buffers except the main one
+    $mainBufferLevel = ob_get_level();
+    while (ob_get_level() > $mainBufferLevel) {
         ob_end_clean();
     }
+    
+    // Clean the main buffer to ensure no accidental output
+    ob_clean();
     
     // Restore error reporting
     error_reporting($oldErrorReporting);
     ini_set('display_errors', $oldDisplayErrors);
     
-    // Output JSON
+    // Output JSON - ensure it's the only output
     echo $json;
+    
+    // Flush and end all buffers
+    if (ob_get_level() > 0) {
+        ob_end_flush();
+    }
     flush();
-    exit;
+    
+    // Exit immediately to prevent any trailing output
+    exit(0);
 }
 
 ?>
@@ -639,21 +701,53 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
                                 return;
                             }
                             
+                            // Check if response looks like JSON (starts with { or [)
+                            const trimmed = xhr.responseText.trim();
+                            if (trimmed.length === 0) {
+                                resultsContainer.innerHTML = '<div class="card"><div class="status status-error">❌ Empty response from server</div></div>';
+                                return;
+                            }
+                            
+                            if (trimmed[0] !== '{' && trimmed[0] !== '[') {
+                                // Response doesn't look like JSON
+                                let errorMsg = 'Response is not valid JSON. First 500 characters:<br><pre style="background:#f0f0f0;padding:10px;border-radius:4px;overflow:auto;max-height:200px;white-space:pre-wrap;">' + escapeHtml(trimmed.substring(0, 500)) + '</pre>';
+                                errorMsg += '<br><strong>Response length:</strong> ' + xhr.responseText.length + ' characters';
+                                errorMsg += '<br><strong>Content-Type:</strong> ' + (xhr.getResponseHeader('Content-Type') || 'not set');
+                                resultsContainer.innerHTML = '<div class="card"><div class="status status-error">❌ ' + errorMsg + '</div></div>';
+                                return;
+                            }
+                            
                             // Try to parse JSON
-                            const result = JSON.parse(xhr.responseText);
+                            const result = JSON.parse(trimmed);
                             displayResults(result);
                         } catch (e) {
                             // Show detailed error information
                             let errorMsg = 'Error parsing JSON response: ' + escapeHtml(e.message);
+                            if (e instanceof SyntaxError) {
+                                errorMsg += '<br><strong>JSON Syntax Error</strong>';
+                                if (e.message.includes('position')) {
+                                    errorMsg += ' at position ' + (e.message.match(/\d+/) || ['unknown'])[0];
+                                }
+                            }
                             if (xhr.responseText) {
-                                const preview = xhr.responseText.substring(0, 200);
-                                errorMsg += '<br><br><strong>Response preview:</strong><br><pre style="background:#f0f0f0;padding:10px;border-radius:4px;overflow:auto;max-height:200px;">' + escapeHtml(preview) + '</pre>';
+                                const preview = xhr.responseText.substring(0, 500);
+                                const lastChars = xhr.responseText.length > 100 ? 
+                                    xhr.responseText.substring(xhr.responseText.length - 100) : '';
+                                errorMsg += '<br><br><strong>Response preview (first 500 chars):</strong><br><pre style="background:#f0f0f0;padding:10px;border-radius:4px;overflow:auto;max-height:200px;white-space:pre-wrap;font-size:0.85rem;">' + escapeHtml(preview) + '</pre>';
+                                if (lastChars) {
+                                    errorMsg += '<br><strong>Last 100 characters:</strong><br><pre style="background:#f0f0f0;padding:10px;border-radius:4px;overflow:auto;max-height:100px;white-space:pre-wrap;font-size:0.85rem;">' + escapeHtml(lastChars) + '</pre>';
+                                }
                                 errorMsg += '<br><strong>Response length:</strong> ' + xhr.responseText.length + ' characters';
+                                errorMsg += '<br><strong>Content-Type:</strong> ' + (xhr.getResponseHeader('Content-Type') || 'not set');
                             }
                             resultsContainer.innerHTML = '<div class="card"><div class="status status-error">❌ ' + errorMsg + '</div></div>';
                         }
                     } else {
-                        resultsContainer.innerHTML = '<div class="card"><div class="status status-error">❌ Server error: ' + xhr.status + ' ' + xhr.statusText + '</div></div>';
+                        let errorMsg = 'Server error: ' + xhr.status + ' ' + xhr.statusText;
+                        if (xhr.responseText) {
+                            errorMsg += '<br><br><strong>Response:</strong><br><pre style="background:#f0f0f0;padding:10px;border-radius:4px;overflow:auto;max-height:200px;white-space:pre-wrap;">' + escapeHtml(xhr.responseText.substring(0, 500)) + '</pre>';
+                        }
+                        resultsContainer.innerHTML = '<div class="card"><div class="status status-error">❌ ' + errorMsg + '</div></div>';
                     }
                 };
                 
@@ -820,6 +914,9 @@ if ($isAjax && !empty($URL) && $URL != "https://" && $URL != "http://") {
         <div class="header">
             <h1>🔍 PAD File Validator</h1>
             <p>Validate your Portable Application Description (PAD) XML files</p>
+            <div style="margin-top: 20px;">
+                <a href="editor.php" class="btn" style="text-decoration: none; display: inline-block;">✏️ Open Editor</a>
+            </div>
         </div>
         
         <div class="card">
