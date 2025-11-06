@@ -8,12 +8,26 @@ $isApi = isset($_GET['api']) || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && str
 
 // API Endpoints
 if ($isApi) {
-    header('Content-Type: application/json; charset=utf-8');
-    
-    // Clear output buffers
-    while (ob_get_level()) {
-        ob_end_clean();
+    // Start output buffering early to catch any accidental output
+    if (ob_get_level() == 0) {
+        ob_start();
+    } else {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        ob_start();
     }
+    
+    // Suppress warnings/notices that might corrupt JSON
+    $oldErrorReporting = error_reporting(E_ERROR | E_PARSE);
+    $oldDisplayErrors = ini_get('display_errors');
+    ini_set('display_errors', '0');
+    
+    // Clear any output that might have been generated
+    ob_clean();
+    
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-cache, must-revalidate');
     
     $action = $_GET['action'] ?? $_POST['action'] ?? '';
     $response = array('success' => false, 'message' => '', 'data' => null);
@@ -213,11 +227,62 @@ if ($isApi) {
             case 'validate':
                 $xmlData = $_POST['xml'] ?? '';
                 if (!empty($xmlData)) {
+                    // Validate XML structure first
+                    $dom = new DOMDocument();
+                    libxml_use_internal_errors(true);
+                    libxml_clear_errors();
+                    $xmlValid = @$dom->loadXML($xmlData);
+                    $xmlErrors = libxml_get_errors();
+                    libxml_clear_errors();
+                    
+                    if (!$xmlValid) {
+                        $errorMessages = array();
+                        foreach ($xmlErrors as $error) {
+                            $errorMessages[] = trim($error->message) . ' (Line ' . $error->line . ')';
+                        }
+                        $response['message'] = 'Invalid XML: ' . implode('; ', $errorMessages);
+                        ob_clean();
+                        $json = json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
+                        error_reporting($oldErrorReporting);
+                        ini_set('display_errors', $oldDisplayErrors);
+                        echo $json;
+                        if (ob_get_level() > 0) ob_end_flush();
+                        flush();
+                        exit(0);
+                    }
+                    
                     // Create temporary PAD file
                     $tempFile = tempnam(sys_get_temp_dir(), 'pad_');
-                    file_put_contents($tempFile, $xmlData);
+                    if ($tempFile === false) {
+                        $response['message'] = 'Failed to create temporary file';
+                        ob_clean();
+                        $json = json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
+                        error_reporting($oldErrorReporting);
+                        ini_set('display_errors', $oldDisplayErrors);
+                        echo $json;
+                        if (ob_get_level() > 0) ob_end_flush();
+                        flush();
+                        exit(0);
+                    }
+                    
+                    $writeResult = @file_put_contents($tempFile, $xmlData);
+                    if ($writeResult === false) {
+                        $response['message'] = 'Failed to write temporary file';
+                        @unlink($tempFile);
+                        ob_clean();
+                        $json = json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
+                        error_reporting($oldErrorReporting);
+                        ini_set('display_errors', $oldDisplayErrors);
+                        echo $json;
+                        if (ob_get_level() > 0) ob_end_flush();
+                        flush();
+                        exit(0);
+                    }
                     
                     $PAD = new PADFile($tempFile);
+                    if (empty($PAD->URL)) {
+                        $PAD->URL = $tempFile;
+                    }
                     if (!isset($PAD->XML) || $PAD->XML === null) {
                         $PAD->XML = new XMLNode("[root]");
                     }
@@ -225,6 +290,9 @@ if ($isApi) {
                     
                     if ($PAD->LastError == ERR_NO_ERROR) {
                         $PADValidator = new PADValidator("http://repository.appvisor.com/padspec/files/padspec.xml");
+                        if (empty($PADValidator->URL)) {
+                            $PADValidator->URL = "http://repository.appvisor.com/padspec/files/padspec.xml";
+                        }
                         if (!isset($PADValidator->XML) || $PADValidator->XML === null) {
                             $PADValidator->XML = new XMLNode("[root]");
                         }
@@ -239,13 +307,19 @@ if ($isApi) {
                             foreach($PADValidator->ValidationErrors as $err) {
                                 ob_start();
                                 $err->Dump();
-                                $errors[] = ob_get_clean();
+                                $errorHtml = ob_get_clean();
+                                if (!empty($errorHtml)) {
+                                    $errors[] = trim($errorHtml);
+                                }
                             }
                             
                             foreach($PADValidator->ValidationWarnings as $warn) {
                                 ob_start();
                                 $warn->Dump();
-                                $warnings[] = ob_get_clean();
+                                $warningHtml = ob_get_clean();
+                                if (!empty($warningHtml)) {
+                                    $warnings[] = trim($warningHtml);
+                                }
                             }
                             
                             $response['success'] = true;
@@ -256,13 +330,43 @@ if ($isApi) {
                                 'warningCount' => $nWarnings
                             );
                         } else {
-                            $response['message'] = 'Could not load validator';
+                            $response['message'] = 'Could not load validator. Make sure you have internet access and cURL or allow_url_fopen enabled.';
                         }
                     } else {
-                        $response['message'] = 'Error loading PAD file: ' . $PAD->LastErrorMsg;
+                        $errorMsg = 'Error loading PAD file';
+                        if (!empty($PAD->LastErrorMsg)) {
+                            $errorMsg .= ': ' . $PAD->LastErrorMsg;
+                        } else {
+                            switch($PAD->LastError) {
+                                case ERR_NO_URL_SPECIFIED:
+                                    $errorMsg .= ': No file path specified';
+                                    break;
+                                case ERR_READ_FROM_URL_FAILED:
+                                    $errorMsg .= ': Cannot read temporary file. File: ' . htmlspecialchars($tempFile) . (file_exists($tempFile) ? ' (exists)' : ' (not found)');
+                                    break;
+                                case ERR_PARSE_ERROR:
+                                    $errorMsg .= ': Parse error' . (!empty($PAD->ParseError) ? ' - ' . $PAD->ParseError : '');
+                                    if (!empty($PAD->ParseError)) {
+                                        $errorMsg .= ' Details: ' . htmlspecialchars($PAD->ParseError);
+                                    }
+                                    break;
+                                default:
+                                    $errorMsg .= ' (Error code: ' . $PAD->LastError . ')';
+                                    if (defined('ERR_NO_ERROR') && $PAD->LastError != ERR_NO_ERROR) {
+                                        $errorMsg .= '. The XML may be invalid or missing required fields.';
+                                    }
+                            }
+                        }
+                        // Add debug info about the XML if available
+                        if (!empty($xmlData)) {
+                            $xmlPreview = substr($xmlData, 0, 200);
+                            $errorMsg .= ' [XML preview: ' . htmlspecialchars($xmlPreview) . '...]';
+                        }
+                        $response['message'] = $errorMsg;
                     }
                     
-                    unlink($tempFile);
+                    // Clean up temporary file
+                    @unlink($tempFile);
                 } else {
                     $response['message'] = 'No XML data provided';
                 }
@@ -275,8 +379,43 @@ if ($isApi) {
         $response['message'] = 'Error: ' . $e->getMessage();
     }
     
-    echo json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
-    exit;
+    // Clean all string values to ensure valid UTF-8
+    array_walk_recursive($response, function(&$value) {
+        if (is_string($value)) {
+            $value = mb_convert_encoding($value, 'UTF-8', 'UTF-8');
+            $value = str_replace("\0", '', $value);
+        }
+    });
+    
+    // Ensure no output before JSON
+    ob_clean();
+    
+    // Encode JSON
+    $json = json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
+    
+    if ($json === false) {
+        // Fallback error response
+        $response = array(
+            'success' => false,
+            'message' => 'JSON encoding error: ' . json_last_error_msg(),
+            'data' => null
+        );
+        $json = json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+    
+    // Restore error reporting
+    error_reporting($oldErrorReporting);
+    ini_set('display_errors', $oldDisplayErrors);
+    
+    // Output JSON
+    echo $json;
+    
+    // Flush and end buffers
+    if (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+    flush();
+    exit(0);
 }
 
 // Helper function to convert XML to array
@@ -1736,6 +1875,9 @@ function getBlankPadStructure() {
         function validatePad() {
             const xml = arrayToXml(padData);
             
+            // Debug: log XML to console
+            console.log('Generated XML:', xml);
+            
             const formData = new FormData();
             formData.append('action', 'validate');
             formData.append('xml', xml);
@@ -1746,7 +1888,19 @@ function getBlankPadStructure() {
                 method: 'POST',
                 body: formData
             })
-            .then(r => r.json())
+            .then(r => {
+                if (!r.ok) {
+                    throw new Error(`HTTP error! status: ${r.status}`);
+                }
+                const contentType = r.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    return r.text().then(text => {
+                        console.error('Non-JSON response:', text);
+                        throw new Error('Server returned non-JSON response. Check console for details.');
+                    });
+                }
+                return r.json();
+            })
             .then(data => {
                 if (data.success) {
                     const result = data.data;
@@ -1761,11 +1915,14 @@ function getBlankPadStructure() {
                         console.log('Warnings:', result.warnings);
                     }
                 } else {
-                    showStatus('Error: ' + data.message, 'error');
+                    const errorMsg = data.message || 'Unknown error occurred';
+                    console.error('Validation error:', errorMsg);
+                    showStatus('Error: ' + errorMsg, 'error');
                 }
             })
             .catch(err => {
-                showStatus('Error: ' + err.message, 'error');
+                console.error('Validation request failed:', err);
+                showStatus('Error: ' + (err.message || 'Failed to validate. Check console for details.'), 'error');
             });
         }
         
