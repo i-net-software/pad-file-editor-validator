@@ -314,46 +314,112 @@ class XMLFile
 
     // Try to read the file using file_get_contents (better HTTPS support)
     $raw = false;
-    if (function_exists('curl_init') && (strpos($this->URL, 'http://') === 0 || strpos($this->URL, 'https://') === 0))
+    $isHttp = (strpos($this->URL, 'http://') === 0 || strpos($this->URL, 'https://') === 0);
+    
+    if (function_exists('curl_init') && $isHttp)
     {
-      // Use cURL for better HTTPS support
+      // Use cURL for better HTTPS support and localhost compatibility
+      // For localhost URLs, try to use 127.0.0.1 explicitly to avoid IPv6 issues
+      $urlToUse = $this->URL;
+      if (strpos($this->URL, 'localhost') !== false) {
+        // Replace localhost with 127.0.0.1 to force IPv4
+        $urlToUse = str_replace('localhost', '127.0.0.1', $this->URL);
+      }
+      
       $ch = curl_init();
-      curl_setopt($ch, CURLOPT_URL, $this->URL);
+      curl_setopt($ch, CURLOPT_URL, $urlToUse);
       curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
       curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
       curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
       curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
       curl_setopt($ch, CURLOPT_USERAGENT, 'PAD Validator');
       curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+      curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+      
+      // Force IPv4 for localhost connections to avoid IPv6 issues
+      if (strpos($urlToUse, '127.0.0.1') !== false || strpos($this->URL, 'localhost') !== false) {
+        curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+      }
+      
       $raw = curl_exec($ch);
       $curl_error = curl_error($ch);
+      $curl_errno = curl_errno($ch);
+      $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
       curl_close($ch);
+      
+      // If localhost failed, try the original URL as fallback
+      if ($raw === false && $urlToUse !== $this->URL && $curl_errno == 7) {
+        // Retry with original localhost URL
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $this->URL);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'PAD Validator');
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+        $raw = curl_exec($ch);
+        $curl_error = curl_error($ch);
+        $curl_errno = curl_errno($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+      }
       
       if ($raw === false)
       {
         $this->LastError = ERR_READ_FROM_URL_FAILED;
-        $this->LastErrorMsg = $curl_error ? $curl_error : "cURL failed";
+        $errorMsg = $curl_error ? $curl_error : "cURL failed";
+        if ($curl_errno) {
+          $errorMsg .= " (Error code: $curl_errno)";
+          if ($curl_errno == 7) {
+            $errorMsg .= " - Connection refused. Make sure the server is running and accessible.";
+          }
+        }
+        $this->LastErrorMsg = $errorMsg;
+        return false;
+      }
+      
+      // Check HTTP response code
+      if ($http_code >= 400) {
+        $this->LastError = ERR_READ_FROM_URL_FAILED;
+        $this->LastErrorMsg = "HTTP error: $http_code";
         return false;
       }
     }
     else
     {
-      // Fall back to file_get_contents with stream context for HTTPS
+      // Check if allow_url_fopen is enabled (required for HTTP URLs)
+      if ($isHttp && !ini_get('allow_url_fopen')) {
+        $this->LastError = ERR_READ_FROM_URL_FAILED;
+        $this->LastErrorMsg = "allow_url_fopen is disabled in PHP configuration. Cannot load HTTP/HTTPS URLs without cURL or allow_url_fopen enabled.";
+        return false;
+      }
+      
+      // Fall back to file_get_contents with stream context for HTTP/HTTPS
       $context = null;
-      if (strpos($this->URL, 'https://') === 0)
-      {
-        $context = stream_context_create(array(
+      if ($isHttp) {
+        $contextOptions = array(
           'http' => array(
             'method' => 'GET',
             'header' => "User-Agent: PAD Validator\r\n",
             'timeout' => 30,
-            'ignore_errors' => true
-          ),
-          'ssl' => array(
-            'verify_peer' => false,
-            'verify_peer_name' => false
+            'ignore_errors' => true,
+            'follow_location' => true
           )
-        ));
+        );
+        
+        // Add SSL options only for HTTPS
+        if (strpos($this->URL, 'https://') === 0) {
+          $contextOptions['ssl'] = array(
+            'verify_peer' => false,
+            'verify_peer_name' => false,
+            'allow_self_signed' => true
+          );
+        }
+        
+        $context = stream_context_create($contextOptions);
       }
       
       $raw = @file_get_contents($this->URL, false, $context);
@@ -371,15 +437,26 @@ class XMLFile
     if ( $raw === false || $raw === "" )
     {
       $this->LastError = ERR_READ_FROM_URL_FAILED;
-      if (isset($php_errormsg))
+      $errorDetails = array();
+      
+      if (isset($php_errormsg) && !empty(trim($php_errormsg)))
       {
-        $this->LastErrorMsg = trim($php_errormsg);
-        if ($this->LastErrorMsg == "failed to open stream: No error")
-          $this->LastErrorMsg = "Unknown host or connection failed";
+        $errorDetails[] = trim($php_errormsg);
       }
-      else
-      {
-        $this->LastErrorMsg = "Failed to read from URL";
+      
+      // Provide more helpful error messages
+      if (strpos($this->URL, 'localhost') !== false || strpos($this->URL, '127.0.0.1') !== false) {
+        $errorDetails[] = "Make sure your local server is running and accessible at this URL.";
+        $errorDetails[] = "Try accessing the URL directly in your browser to verify it's working.";
+        if (!function_exists('curl_init') && !ini_get('allow_url_fopen')) {
+          $errorDetails[] = "Both cURL and allow_url_fopen are unavailable. Enable at least one in PHP configuration.";
+        }
+      }
+      
+      if (empty($errorDetails)) {
+        $this->LastErrorMsg = "Failed to read from URL. Check that the URL is accessible and your server configuration allows HTTP requests.";
+      } else {
+        $this->LastErrorMsg = implode(" ", $errorDetails);
       }
       return false;
     }

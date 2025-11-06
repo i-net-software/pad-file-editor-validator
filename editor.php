@@ -27,6 +27,29 @@ if ($isApi) {
                     $response['data'] = getBlankPadStructure();
                     $response['success'] = true;
                 } else {
+                    // Normalize file paths (handle both absolute and relative paths)
+                    $isLocalPath = !preg_match('/^https?:\/\//', $url);
+                    if ($isLocalPath) {
+                        // If it's a relative path, make it absolute relative to the script directory
+                        if (!preg_match('/^\//', $url)) {
+                            // Relative path - make it relative to the editor.php location
+                            $url = dirname(__FILE__) . '/' . $url;
+                        }
+                        // Clean up the path (remove .. and .)
+                        $url = realpath($url);
+                        if ($url === false || !file_exists($url)) {
+                            $response['message'] = 'Local file not found: ' . htmlspecialchars($_POST['url'] ?? $_GET['url'] ?? '');
+                            echo json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
+                            exit;
+                        }
+                        // Check if it's readable
+                        if (!is_readable($url)) {
+                            $response['message'] = 'Local file is not readable. Check file permissions.';
+                            echo json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
+                            exit;
+                        }
+                    }
+                    
                     // Ensure URL is set properly
                     $PAD = new PADFile($url);
                     // Double-check URL is set (workaround for constructor issues)
@@ -983,10 +1006,13 @@ function getBlankPadStructure() {
                 <div class="form-group">
                     <label>Load Existing PAD File (Optional)</label>
                     <div style="display: flex; gap: 10px;">
-                        <input type="url" id="loadUrl" placeholder="https://example.com/padfile.xml" style="flex: 1;">
+                        <input type="text" id="loadUrl" placeholder="https://example.com/padfile.xml or /path/to/file.xml" style="flex: 1;">
                         <button class="btn" onclick="loadPadFile()">Load</button>
                         <button class="btn btn-secondary" onclick="startBlank()">Start Blank</button>
                     </div>
+                    <small style="color: #666; margin-top: 5px; display: block;">
+                        Enter a URL (http:// or https://) or a local file path (e.g., /path/to/padfile.xml or ./padfile.xml)
+                    </small>
                 </div>
                 <div id="loadStatus"></div>
             </div>
@@ -1036,12 +1062,18 @@ function getBlankPadStructure() {
                 return;
             }
             
-            // Validate URL format
-            try {
-                new URL(url);
-            } catch (e) {
-                showStatus('Invalid URL format. Please enter a valid URL (e.g., https://example.com/padfile.xml)', 'error');
-                return;
+            // Validate URL or file path format
+            const isUrl = /^https?:\/\//.test(url);
+            const isLocalPath = /^\/|^\.\//.test(url) || (!isUrl && url.length > 0);
+            
+            if (!isUrl && !isLocalPath) {
+                // Try to validate as URL
+                try {
+                    new URL(url);
+                } catch (e) {
+                    showStatus('Invalid format. Please enter a valid URL (http:// or https://) or a local file path (e.g., /path/to/file.xml or ./file.xml)', 'error');
+                    return;
+                }
             }
             
             showStatus('Loading PAD file...', 'info');
@@ -1123,6 +1155,9 @@ function getBlankPadStructure() {
                 tabContent.innerHTML = tab.content;
                 tabsContent.appendChild(tabContent);
             });
+            
+            // Update expiration info visibility after rendering
+            setTimeout(() => updateExpireInfoVisibility(), 0);
         }
         
         function switchTab(index) {
@@ -1173,6 +1208,10 @@ function getBlankPadStructure() {
                             <input type="text" data-path="Program_Info.Program_Category_Class" value="${escapeHtml(info.Program_Category_Class || '')}" placeholder="Business::Other" onchange="updateField(this)">
                         </div>
                         <div class="form-group">
+                            <label>Specific Category</label>
+                            <input type="text" data-path="Program_Info.Program_Specific_Category" value="${escapeHtml(info.Program_Specific_Category || '')}" placeholder="e.g., Accounting" onchange="updateField(this)">
+                        </div>
+                        <div class="form-group">
                             <label>OS Support</label>
                             <input type="text" data-path="Program_Info.Program_OS_Support" value="${escapeHtml(info.Program_OS_Support || '')}" placeholder="WinXP,WinVista,Win7,Win8,Win10" onchange="updateField(this)">
                         </div>
@@ -1218,15 +1257,71 @@ function getBlankPadStructure() {
                     <div class="grid">
                         <div class="form-group">
                             <label>Cost (USD)</label>
-                            <input type="text" data-path="Program_Info.Program_Cost_Dollars" value="${escapeHtml(info.Program_Cost_Dollars || '0.00')}" onchange="updateField(this)">
+                            <input type="text" data-path="Program_Info.Program_Cost_Dollars" value="${escapeHtml(info.Program_Cost_Dollars || '0.00')}" placeholder="0.00" onchange="updateField(this)">
                         </div>
                         <div class="form-group">
                             <label>Cost (Other Currency)</label>
-                            <input type="text" data-path="Program_Info.Program_Cost_Other" value="${escapeHtml(info.Program_Cost_Other || '0.00')}" onchange="updateField(this)">
+                            <input type="text" data-path="Program_Info.Program_Cost_Other" value="${escapeHtml(info.Program_Cost_Other || '0.00')}" placeholder="0.00" onchange="updateField(this)">
                         </div>
                         <div class="form-group">
                             <label>Currency Code</label>
-                            <input type="text" data-path="Program_Info.Program_Cost_Other_Code" value="${escapeHtml(info.Program_Cost_Other_Code || 'USD')}" onchange="updateField(this)">
+                            <input type="text" data-path="Program_Info.Program_Cost_Other_Code" value="${escapeHtml(info.Program_Cost_Other_Code || 'USD')}" placeholder="USD" maxlength="3" onchange="updateField(this)">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">File Information</div>
+                    <div class="grid">
+                        <div class="form-group">
+                            <label>File Size (Bytes)</label>
+                            <input type="number" data-path="Program_Info.File_Info.File_Size_Bytes" value="${fileInfo.File_Size_Bytes || ''}" placeholder="e.g., 1048576" min="0" onchange="updateField(this)">
+                        </div>
+                        <div class="form-group">
+                            <label>File Size (KB)</label>
+                            <input type="number" data-path="Program_Info.File_Info.File_Size_K" value="${fileInfo.File_Size_K || ''}" placeholder="e.g., 1024" min="0" step="0.01" onchange="updateField(this)">
+                        </div>
+                        <div class="form-group">
+                            <label>File Size (MB)</label>
+                            <input type="number" data-path="Program_Info.File_Info.File_Size_MB" value="${fileInfo.File_Size_MB || ''}" placeholder="e.g., 1.0" min="0" step="0.01" onchange="updateField(this)">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">Expiration Information</div>
+                    <div class="grid">
+                        <div class="form-group">
+                            <label>Has Expiration Info</label>
+                            <select data-path="Program_Info.Expire_Info.Has_Expire_Info" onchange="updateExpireInfo(this)">
+                                <option value="N" ${expireInfo.Has_Expire_Info === 'N' || !expireInfo.Has_Expire_Info ? 'selected' : ''}>No</option>
+                                <option value="Y" ${expireInfo.Has_Expire_Info === 'Y' ? 'selected' : ''}>Yes</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="expireBasedOnGroup" style="display: ${expireInfo.Has_Expire_Info === 'Y' ? 'block' : 'none'};">
+                            <label>Expire Based On</label>
+                            <select data-path="Program_Info.Expire_Info.Expire_Based_On" onchange="updateField(this); updateExpireInfoVisibility();">
+                                <option value="Days" ${expireInfo.Expire_Based_On === 'Days' || !expireInfo.Expire_Based_On ? 'selected' : ''}>Days</option>
+                                <option value="Uses" ${expireInfo.Expire_Based_On === 'Uses' ? 'selected' : ''}>Uses</option>
+                                <option value="Date" ${expireInfo.Expire_Based_On === 'Date' ? 'selected' : ''}>Date</option>
+                                <option value="Other" ${expireInfo.Expire_Based_On === 'Other' ? 'selected' : ''}>Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="expireCountGroup" style="display: ${(expireInfo.Has_Expire_Info === 'Y' && (expireInfo.Expire_Based_On === 'Days' || expireInfo.Expire_Based_On === 'Uses' || !expireInfo.Expire_Based_On)) ? 'block' : 'none'};">
+                            <label>Expire Count</label>
+                            <input type="number" data-path="Program_Info.Expire_Info.Expire_Count" value="${expireInfo.Expire_Count || ''}" placeholder="e.g., 30" min="0" onchange="updateField(this)">
+                        </div>
+                        <div class="form-group" id="expireDateGroup" style="display: ${(expireInfo.Has_Expire_Info === 'Y' && expireInfo.Expire_Based_On === 'Date') ? 'block' : 'none'};">
+                            <label>Expiration Date</label>
+                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                                <input type="number" data-path="Program_Info.Expire_Info.Expire_Year" value="${expireInfo.Expire_Year || ''}" placeholder="Year" min="1900" max="2100" onchange="updateField(this)">
+                                <input type="number" data-path="Program_Info.Expire_Info.Expire_Month" value="${expireInfo.Expire_Month || ''}" placeholder="Month" min="1" max="12" onchange="updateField(this)">
+                                <input type="number" data-path="Program_Info.Expire_Info.Expire_Day" value="${expireInfo.Expire_Day || ''}" placeholder="Day" min="1" max="31" onchange="updateField(this)">
+                            </div>
+                        </div>
+                        <div class="form-group full-width" id="expireOtherGroup" style="display: ${(expireInfo.Has_Expire_Info === 'Y' && expireInfo.Expire_Based_On === 'Other') ? 'block' : 'none'};">
+                            <label>Expire Other Info</label>
+                            <textarea data-path="Program_Info.Expire_Info.Expire_Other_Info" onchange="updateField(this)" rows="2">${escapeHtml(expireInfo.Expire_Other_Info || '')}</textarea>
                         </div>
                     </div>
                 </div>
@@ -1425,7 +1520,11 @@ function getBlankPadStructure() {
                         </div>
                         <div class="form-group">
                             <label>PAD Editor</label>
-                            <input type="text" data-path="MASTER_PAD_VERSION_INFO.MASTER_PAD_EDITOR" value="${escapeHtml(master.MASTER_PAD_EDITOR || '')}" onchange="updateField(this)">
+                            <input type="text" data-path="MASTER_PAD_VERSION_INFO.MASTER_PAD_EDITOR" value="${escapeHtml(master.MASTER_PAD_EDITOR || '')}" placeholder="Name of editor used" onchange="updateField(this)">
+                        </div>
+                        <div class="form-group full-width">
+                            <label>PAD Info</label>
+                            <textarea data-path="MASTER_PAD_VERSION_INFO.MASTER_PAD_INFO" onchange="updateField(this)" rows="3">${escapeHtml(master.MASTER_PAD_INFO || 'Portable Application Description, or PAD for short, is a data set that is used by shareware authors to dissemminate information to anyone interested in their software products. To find out more go to http://www.asp-shareware.org/pad')}</textarea>
                         </div>
                     </div>
                 </div>
@@ -1466,6 +1565,49 @@ function getBlankPadStructure() {
             }
             
             current[parts[parts.length - 1]] = value;
+            
+            // Special handling for Expire_Based_On to show/hide related fields
+            if (path === 'Program_Info.Expire_Info.Expire_Based_On') {
+                updateExpireInfoVisibility();
+            }
+        }
+        
+        function updateExpireInfo(element) {
+            // Update the field value
+            updateField(element);
+            
+            // Update visibility of expiration-related fields
+            updateExpireInfoVisibility();
+        }
+        
+        function updateExpireInfoVisibility() {
+            const expireInfo = padData.Program_Info?.Expire_Info || {};
+            const hasExpire = expireInfo.Has_Expire_Info === 'Y';
+            const expireBasedOn = expireInfo.Expire_Based_On || 'Days';
+            
+            // Show/hide Expire_Based_On dropdown
+            const expireBasedOnGroup = document.getElementById('expireBasedOnGroup');
+            if (expireBasedOnGroup) {
+                expireBasedOnGroup.style.display = hasExpire ? 'block' : 'none';
+            }
+            
+            // Show/hide Expire_Count (for Days or Uses)
+            const expireCountGroup = document.getElementById('expireCountGroup');
+            if (expireCountGroup) {
+                expireCountGroup.style.display = (hasExpire && (expireBasedOn === 'Days' || expireBasedOn === 'Uses')) ? 'block' : 'none';
+            }
+            
+            // Show/hide Expiration Date (for Date)
+            const expireDateGroup = document.getElementById('expireDateGroup');
+            if (expireDateGroup) {
+                expireDateGroup.style.display = (hasExpire && expireBasedOn === 'Date') ? 'block' : 'none';
+            }
+            
+            // Show/hide Expire_Other_Info (for Other)
+            const expireOtherGroup = document.getElementById('expireOtherGroup');
+            if (expireOtherGroup) {
+                expireOtherGroup.style.display = (hasExpire && expireBasedOn === 'Other') ? 'block' : 'none';
+            }
         }
         
         function addLanguage() {
