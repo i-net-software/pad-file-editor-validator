@@ -1,15 +1,27 @@
 # 🔍 PAD File Editor and Validator
 
-A modern, user-friendly web application for validating Portable Application Description (PAD) XML files. This tool helps software developers ensure their PAD files conform to the official PAD specification before submission to software directories.
+A modern, user-friendly web application for validating and editing Portable Application Description (PAD) XML files. This tool helps software developers ensure their PAD files conform to the official PAD specification before submission to software directories.
 
 ![PHP Version](https://img.shields.io/badge/PHP-7.4%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Repository**: [https://github.com/i-net-software/pad-file-editor-validator](https://github.com/i-net-software/pad-file-editor-validator)
 
+## ⚠️ Disclaimer
+
+**This code was developed experimentally and is provided "as is" without any guarantees or warranties.**
+
+- Use at your own risk
+- No warranty of any kind, express or implied
+- The code may contain bugs or unexpected behavior
+- Always validate your PAD files through official channels before submission
+- Backup your files before using the editor
+
 ## ✨ Features
 
+### Validator (`index.php`)
 - **🌐 URL-based Validation**: Simply paste a PAD file URL and validate it instantly
+- **📁 Local File Support**: Load PAD files from local file paths or URLs
 - **⚡ Asynchronous Processing**: No page reloads - smooth, modern user experience
 - **🎨 Beautiful Modern UI**: Clean, responsive design with gradient backgrounds and smooth animations
 - **📊 Detailed Reports**: Comprehensive validation reports with clear error and warning messages
@@ -18,6 +30,23 @@ A modern, user-friendly web application for validating Portable Application Desc
 - **🔧 Encoding Detection**: Automatically detects and handles various character encodings (UTF-8, ISO-8859-1, Windows-1252)
 - **🛡️ Robust Error Handling**: Graceful handling of network errors, parse errors, and encoding issues
 - **📱 Responsive Design**: Works perfectly on desktop, tablet, and mobile devices
+
+### Editor (`editor.php`)
+- **✏️ Full PAD File Editor**: Create and edit complete PAD XML files with a user-friendly interface
+- **📝 All PAD Fields Supported**: Comprehensive support for all PAD 4.0 specification fields including:
+  - Program Information (name, version, type, release status, pricing, etc.)
+  - Company Information (address, contact, support details)
+  - Program Descriptions (multi-language support with all description lengths)
+  - Web Information (URLs for info, order, screenshots, icons)
+  - File Information (file sizes)
+  - Expiration Information (with conditional fields)
+  - Advanced settings (PAD version info, ASP membership)
+- **🌐 Load from URL or Local File**: Load existing PAD files from HTTP/HTTPS URLs or local file paths
+- **💾 Save as XML**: Export your edited PAD file as properly formatted XML
+- **✅ Built-in Validation**: Validate your PAD file directly from the editor
+- **🌍 Multi-language Support**: Add and manage descriptions in multiple languages
+- **🎯 Smart Field Visibility**: Conditional fields appear based on your selections (e.g., expiration date fields)
+- **📋 Tabbed Interface**: Organized tabs for easy navigation (Basic Info, Company, Descriptions, Web & URLs, Advanced)
 
 ## 🚀 Quick Start
 
@@ -114,7 +143,11 @@ extension=curl
 
 ## 🎯 Usage
 
-1. **Enter a PAD File URL**: Paste the full URL to your PAD XML file
+### Using the Validator (`index.php`)
+
+1. **Enter a PAD File URL or Local Path**: 
+   - Paste the full URL to your PAD XML file (e.g., `https://example.com/padfile.xml`)
+   - Or enter a local file path (e.g., `/path/to/padfile.xml` or `./padfile.xml`)
 2. **Click Validate**: The validator will fetch and analyze the file
 3. **Review Results**: 
    - ✅ Green badges indicate success
@@ -123,11 +156,27 @@ extension=curl
 4. **View XML Source**: Click "View XML Source" to see the raw XML with syntax highlighting
 5. **Copy XML**: Use the copy button to quickly copy the XML content
 
+### Using the Editor (`editor.php`)
+
+1. **Access the Editor**: Click the "✏️ Open Editor" button from the validator page, or navigate directly to `editor.php`
+2. **Load an Existing File** (optional):
+   - Enter a URL: `https://example.com/padfile.xml`
+   - Or enter a local file path: `/path/to/padfile.xml` or `./padfile.xml`
+   - Click "Load" to populate the editor with existing data
+   - Or click "Start Blank" to create a new PAD file from scratch
+3. **Fill in the Fields**: 
+   - Navigate through the tabs (Basic Info, Company, Descriptions, Web & URLs, Advanced)
+   - Fill in all required fields (marked with *)
+   - Add multiple language descriptions if needed
+4. **Validate**: Click "Validate" to check your PAD file against the specification
+5. **Save**: Click "Save as XML" to download your completed PAD file
+
 ## 🏗️ Project Structure
 
 ```
 pad-file-editor-validator/
-├── index.php              # Main entry point (HTML + PHP)
+├── index.php              # Validator - main entry point (HTML + PHP)
+├── editor.php             # Editor - PAD file creation and editing interface
 ├── include/
 │   ├── padfile.php       # PAD file loading and parsing
 │   ├── padvalidator.php  # Validation logic
